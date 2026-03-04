@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>drive_hardware</name>
+  <version>0.1.0</version>
+  <description>
+    Hardware interface package for rover drive system.
+    Handles serial communication between ROS2 and STM32 motor controller.
+  </description>
+
+  <maintainer email="your_email@example.com">Your Name</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+
