@@ -20,6 +20,7 @@ class TankDriveJoystick(Node):
         self.declare_parameter("control_rate", 20.0)      # Hz
         self.declare_parameter("left_axis_index", 1)
         self.declare_parameter("right_axis_index", 4)
+        self.declare_parameter("mode_button_index", 0)    # PID/PWM Mode Button (X button (Xbox=2, PS4=0))
 
         # Get Parameters
         self.deadzone = self.get_parameter("deadzone").value
@@ -28,6 +29,7 @@ class TankDriveJoystick(Node):
         self.control_rate = self.get_parameter("control_rate").value
         self.left_axis_index = self.get_parameter("left_axis_index").value
         self.right_axis_index = self.get_parameter("right_axis_index").value
+        self.mode_button_index = self.get_parameter("mode_button_index").value
 
         self.control_period = 1.0 / self.control_rate
 
@@ -39,6 +41,9 @@ class TankDriveJoystick(Node):
 
         self.target_left_speed = 0.0
         self.target_right_speed = 0.0
+
+        self.control_mode = 0  # 0: PWM, 1: PID
+        self.last_button_state = 0
 
         self.last_joy_time = self.get_clock().now()
         self.timeout_active = False
@@ -61,7 +66,7 @@ class TankDriveJoystick(Node):
 
         self.create_timer(self.control_period, self.control_loop)
 
-        self.get_logger().info("Tank Drive Joystick Node Started.")
+        self.get_logger().info("Tank Drive Joystick Node Started. Mode: PWM (0)")
 
     # --------------------------------------------------
     # Utility Functions
@@ -105,6 +110,7 @@ class TankDriveJoystick(Node):
             self.get_logger().info("Joystick connection restored.")
             self.timeout_active = False
 
+        # --- Axis inputs ---
         try:
             left_input = msg.axes[self.left_axis_index]
             right_input = msg.axes[self.right_axis_index]
@@ -114,6 +120,22 @@ class TankDriveJoystick(Node):
 
         self.target_left_speed = self.apply_deadzone(left_input)
         self.target_right_speed = self.apply_deadzone(right_input)
+
+        # --- Mode toggle button (rising edge only) ---
+        try:
+            current_mode_button = msg.buttons[self.mode_button_index]
+        except IndexError:
+            self.get_logger().error("Mode button index out of range!")
+            return
+
+        if current_mode_button == 1 and self.last_button_state == 0:
+            # Rising edge detected → toggle mode
+            self.control_mode = 1 if self.control_mode == 0 else 0
+
+            mode_name = "PID (1)" if self.control_mode == 1 else "PWM (0)"
+            self.get_logger().info(f"Control mode switched to: {mode_name}")
+
+        self.last_button_state = current_mode_button
 
     def control_loop(self):
 
@@ -144,17 +166,16 @@ class TankDriveJoystick(Node):
             dt
         )
 
-        # Publish wheel speeds
+        # Publish wheel speeds and control mode combined in a 5-element array
         wheel_msg = Float32MultiArray()
         wheel_msg.data = [
-            float(self.current_left_speed),   # Front Left
-            float(self.current_left_speed),   # Rear Left
-            float(self.current_right_speed),  # Front Right
-            float(self.current_right_speed)   # Rear Right
+            float(self.control_mode),          # Control Mode (0.0=PWM, 1.0=PID)
+            float(self.current_left_speed),    # Front Left
+            float(self.current_left_speed),    # Rear Left
+            float(self.current_right_speed),   # Front Right
+            float(self.current_right_speed)    # Rear Right
         ]
-
         self.wheel_pub.publish(wheel_msg)
-
 
 def main(args=None):
     rclpy.init(args=args)
@@ -166,4 +187,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-

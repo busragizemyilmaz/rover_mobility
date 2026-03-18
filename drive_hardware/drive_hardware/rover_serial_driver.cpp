@@ -21,12 +21,13 @@ using std::placeholders::_1;
  * - Transmit packet to STM32 via UART
  * - Enforce communication timeout safety
  *
- * Packet Format (5 bytes):
- * [0] 0xFF header
- * [1] Front Left
- * [2] Rear Left
- * [3] Front Right
- * [4] Rear Right
+* Packet Format (6 bytes):
+ * [0] 0xFF        — Header
+ * [1] mode        — Control mode (0=PWM, 1=PID)
+ * [2] Front Left  — sol_on
+ * [3] Rear Left   — sol_ark
+ * [4] Front Right — sag_on
+ * [5] Rear Right  — sag_ark
  */
 
 class RoverSerialDriver : public rclcpp::Node
@@ -36,7 +37,6 @@ public:
         : Node("rover_serial_driver")
     {
         // ---------------- PARAMETERS ----------------
-        // These can be overridden from launch file
         this->declare_parameter<string>("port_name", "/dev/ttyACM0");
         this->declare_parameter<int>("baud_rate", 115200);
         this->declare_parameter<double>("timeout_sec", 0.5);
@@ -60,22 +60,21 @@ public:
         }
 
         // ---------------- ROS INTERFACES ----------------
-        // Receives normalized wheel speeds from teleop or navigation stack
+        // 5-Element array from teleop [ControlMode, FL, RL, FR, RR]
         speed_subscriber_ =
             this->create_subscription<std_msgs::msg::Float32MultiArray>(
                 "/wheel_speeds",
                 10,
                 bind(&RoverSerialDriver::speedCallback, this, _1));
                 
-        // Encoder publish      
+        // Encoder raw data publisher  
         encoder_pub_ = this->create_publisher<std_msgs::msg::Int64MultiArray>("/encoder_raw", 10);
 
-        // NEW: Timer to continuously read the serial port (50 Hz / 20ms)
+        // Timer to continuously read the serial port (50 Hz / 20ms)
         read_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(20), bind(&RoverSerialDriver::read_serial_data, this));
+            std::chrono::milliseconds(20), 
+            bind(&RoverSerialDriver::read_serial_data, this));
 
-        RCLCPP_INFO(this->get_logger(), "Rover Serial Driver Started. Full-Duplex (Read/Write) Active.");
-        
         // Control loop runs at fixed 20 Hz (50 ms)
         control_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(50),
@@ -83,11 +82,13 @@ public:
 
         last_msg_time_ = this->now();
         wheel_speeds_  = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        RCLCPP_INFO(this->get_logger(), "Rover Serial Driver Started. Full-Duplex (Read/Write) Active.");
     }
 
     ~RoverSerialDriver()
     {
-        // On shutdown, send neutral command to stop rover
+        // Send neutral packet on shutdown to stop the rover
         wheel_speeds_ = {0.0f, 0.0f, 0.0f, 0.0f};
         sendPacket();
 
@@ -104,10 +105,22 @@ private:
     {
         last_msg_time_ = this->now();
 
-        // Expecting at least 4 values
-        if (msg->data.size() >= 4)
+        // Validate packet structure
+        if (msg->data.size() >= 5)
         {
-            wheel_speeds_ = msg->data;
+            // Extract Mode (Index 0)
+            uint8_t new_mode = static_cast<uint8_t>(msg->data[0]);
+            if (new_mode != control_mode_)
+            {
+                control_mode_ = new_mode;
+                RCLCPP_INFO(this->get_logger(),
+                            "Control mode updated: %s (%d)",
+                            control_mode_ == 1 ? "PID" : "PWM",
+                            control_mode_);
+            }
+
+            // Extract Speeds (Indices 1 to 4)
+            wheel_speeds_ = {msg->data[1], msg->data[2], msg->data[3], msg->data[4]};
         }
     }
     
@@ -127,7 +140,7 @@ private:
             rx_buffer_.insert(rx_buffer_.end(), temp_buf, temp_buf + bytes_read);
         }
 
-        // Packet size is 20 bytes. Do we have enough data?
+        // Each encoder packet is 20 bytes
         while (rx_buffer_.size() >= 20) 
         {
             // Check headers: 0xBA, 0xAB and 0xCD, 0xDC
@@ -141,11 +154,15 @@ private:
                 uint32_t v4 = (rx_buffer_[16] << 24) | (rx_buffer_[17] << 16) | (rx_buffer_[18] << 8) | rx_buffer_[19];
 
                 // Publish the raw data to the ROS network
-                auto msg = std_msgs::msg::Int64MultiArray();
+                auto enc_msg      = std_msgs::msg::Int64MultiArray();
                 // Explicitly cast to int64_t to match the ROS message type
-                msg.data = {static_cast<int64_t>(v1), static_cast<int64_t>(v2), 
-                            static_cast<int64_t>(v3), static_cast<int64_t>(v4)};
-                encoder_pub_->publish(msg);
+                enc_msg.data      = {
+                    static_cast<int64_t>(v1),
+                    static_cast<int64_t>(v2),
+                    static_cast<int64_t>(v3),
+                    static_cast<int64_t>(v4)
+                };
+                encoder_pub_->publish(enc_msg);
 
                 // Erase the processed 20 bytes from the buffer
                 rx_buffer_.erase(rx_buffer_.begin(), rx_buffer_.begin() + 20);
@@ -167,9 +184,11 @@ private:
     void controlLoop()
     {
         // Attempt reconnection if port was not opened
-        if (serial_fd_ == -1)
+       if (serial_fd_ == -1)
         {
-            openSerialPort();
+            if (openSerialPort()) {
+                RCLCPP_INFO(this->get_logger(), "✅ Serial reconnected successfully!");
+            }
             return;
         }
 
@@ -217,22 +236,25 @@ private:
         if (serial_fd_ == -1)
             return;
 
-        uint8_t packet[5];
+        uint8_t packet[6];
 
         packet[0] = 0xFF;
-        packet[1] = mapSpeedToByte(wheel_speeds_[0]);
-        packet[2] = mapSpeedToByte(wheel_speeds_[1]);
-        packet[3] = mapSpeedToByte(wheel_speeds_[2]);
-        packet[4] = mapSpeedToByte(wheel_speeds_[3]);
+        packet[1] = control_mode_;
+        packet[2] = mapSpeedToByte(wheel_speeds_[0]);  // Front Left  (sol_on)
+        packet[3] = mapSpeedToByte(wheel_speeds_[1]);  // Rear Left   (sol_ark)
+        packet[4] = mapSpeedToByte(wheel_speeds_[2]);  // Front Right (sag_on)
+        packet[5] = mapSpeedToByte(wheel_speeds_[3]);  // Rear Right  (sag_ark)
 
         ssize_t bytes_written = write(serial_fd_, packet, sizeof(packet));
 
         if (bytes_written != sizeof(packet))
         {
             RCLCPP_ERROR(this->get_logger(),
-                         "Serial write error (%ld/%ld bytes)",
-                         bytes_written,
-                         sizeof(packet));
+                         "❌ Serial write error. Cable disconnected!");
+            
+            // Auto-Reconnect mekanizmasını tetiklemek için portu kapat
+            close(serial_fd_);
+            serial_fd_ = -1; 
         }
     }
 
@@ -250,7 +272,11 @@ private:
         memset(&tty, 0, sizeof tty);
 
         if (tcgetattr(serial_fd_, &tty) != 0)
+        {
+            close(serial_fd_);
+            serial_fd_ = -1;
             return false;
+        }
 
         speed_t baud_constant;
 
@@ -283,28 +309,35 @@ private:
         tty.c_cflag &= ~CRTSCTS;
 
         if (tcsetattr(serial_fd_, TCSANOW, &tty) != 0)
+        {
+            close(serial_fd_);
+            serial_fd_ = -1;
             return false;
+        }
 
         return true;
     }
 
 private:
+    // Subscribers & Publishers
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr speed_subscriber_;
     rclcpp::Publisher<std_msgs::msg::Int64MultiArray>::SharedPtr encoder_pub_;
+
+    // Timers
     rclcpp::TimerBase::SharedPtr read_timer_;
     rclcpp::TimerBase::SharedPtr control_timer_;
 
+    // State
     rclcpp::Time last_msg_time_;
-
     string port_name_;
     int baud_rate_;
     double timeout_sec_;
-
-    int serial_fd_ = -1;
+    int serial_fd_       = -1;
+    uint8_t control_mode_    = 0;      // 0=PWM, 1=PID
+    bool emergency_active_ = false;
 
     vector<float> wheel_speeds_;
     vector<uint8_t> rx_buffer_;
-    bool emergency_active_ = false;
 };
 
 int main(int argc, char *argv[])
