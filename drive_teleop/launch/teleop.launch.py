@@ -3,11 +3,10 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-
 def generate_launch_description():
-
     right_axis_index = LaunchConfiguration('right_axis_index')
     left_axis_index = LaunchConfiguration('left_axis_index')
+    drive_mode = LaunchConfiguration('drive_mode')
 
     joy_node = Node(
         package='joy',
@@ -31,7 +30,8 @@ def generate_launch_description():
             {'timeout_sec': 0.5},
             {'control_rate': 20.0},
             {'left_axis_index': left_axis_index},
-            {'right_axis_index': right_axis_index}
+            {'right_axis_index': right_axis_index},
+            {'drive_mode': drive_mode}
         ]
     )
 
@@ -44,7 +44,10 @@ def generate_launch_description():
             'right_axis_index',
             default_value='4'
         ),
+        DeclareLaunchArgument(
+            'drive_mode',
+            default_value='1'
+        ),
         joy_node,
         tank_drive_node
     ])
-
