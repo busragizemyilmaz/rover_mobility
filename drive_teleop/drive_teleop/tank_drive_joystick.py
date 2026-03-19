@@ -20,7 +20,9 @@ class TankDriveJoystick(Node):
         self.declare_parameter("control_rate", 20.0)      # Hz
         self.declare_parameter("left_axis_index", 1)
         self.declare_parameter("right_axis_index", 4)
+        self.declare_parameter("right_axis_index_diff", 3)
         self.declare_parameter("mode_button_index", 0)    # PID/PWM Mode Button (X button (Xbox=2, PS4=0))
+        self.declare_parameter("drive_mode", 1)           # 1: Tank Drive, 2: Differential Drive
 
         # Get Parameters
         self.deadzone = self.get_parameter("deadzone").value
@@ -29,7 +31,9 @@ class TankDriveJoystick(Node):
         self.control_rate = self.get_parameter("control_rate").value
         self.left_axis_index = self.get_parameter("left_axis_index").value
         self.right_axis_index = self.get_parameter("right_axis_index").value
+        self.right_axis_index_diff = self.get_parameter("right_axis_index_diff").value
         self.mode_button_index = self.get_parameter("mode_button_index").value
+        self.drive_mode = self.get_parameter("drive_mode").value
 
         self.control_period = 1.0 / self.control_rate
 
@@ -66,7 +70,8 @@ class TankDriveJoystick(Node):
 
         self.create_timer(self.control_period, self.control_loop)
 
-        self.get_logger().info("Tank Drive Joystick Node Started. Mode: PWM (0)")
+        drive_mode_name = "Tank Drive (1)" if self.drive_mode == 1 else "Differential Drive (2)"
+        self.get_logger().info(f"Tank Drive Joystick Node Started. Mode: PWM (0) | Drive Mode: {drive_mode_name}")
 
     # --------------------------------------------------
     # Utility Functions
@@ -114,12 +119,27 @@ class TankDriveJoystick(Node):
         try:
             left_input = msg.axes[self.left_axis_index]
             right_input = msg.axes[self.right_axis_index]
+            right_input_diff = msg.axes[self.right_axis_index_diff]
         except IndexError:
             self.get_logger().error("Joystick axis index out of range!")
             return
 
-        self.target_left_speed = self.apply_deadzone(left_input)
-        self.target_right_speed = self.apply_deadzone(right_input)
+        if self.drive_mode == 1:
+            # --- Tank Drive: her eksen bir tekerleği kontrol eder ---
+            self.target_left_speed = self.apply_deadzone(left_input)
+            self.target_right_speed = self.apply_deadzone(right_input)
+
+        else:
+            # --- Differential Drive: sol eksen=linear, sağ eksen=angular ---
+            linear = self.apply_deadzone(left_input)
+            angular = self.apply_deadzone(right_input_diff)
+            
+            left = linear + angular
+            right = linear - angular
+
+            # Clamp to [-1, 1]
+            self.target_left_speed = max(min(left, 1.0), -1.0)
+            self.target_right_speed = max(min(right, 1.0), -1.0)
 
         # --- Mode toggle button (rising edge only) ---
         try:
