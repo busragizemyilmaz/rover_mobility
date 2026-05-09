@@ -1,4 +1,4 @@
-# 🤖 Rover Mobility
+# Rover Mobility ve Odometri
 
 ROS 2 tabanlı rover hareket sistemi. Joystick girdisini işler, STM32 mikrodenetleyicisine UART üzerinden komut gönderir ve encoder geri bildirimini okuyarak tekerlek mesafelerini hesaplar.
 
