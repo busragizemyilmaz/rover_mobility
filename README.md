@@ -24,18 +24,18 @@ ROS 2 tabanlı rover hareket sistemi. Joystick girdisini işler, STM32 mikrodene
 
 ```
 rover_mobility/
-├── drive_teleop/                         Joystick → /wheel_speeds (Python)
+├── drive_teleop/                         ← Joystick → /wheel_speeds (Python)
 │   └── drive_teleop/
 │       └── tank_drive_joystick.py
 │   └── launch/teleop.launch.py
 │
-├── drive_hardware/                       /wheel_speeds → STM32 UART (C++)
+├── drive_hardware/                       ← /wheel_speeds → STM32 UART (C++)
 │   └── src/rover_serial_driver.cpp
 │   └── launch/hardware.launch.py
 │
-└── rover_encoder/                        /encoder_raw → /wheel_distances (Python)
+└── rover_encoder/                        ← /encoder_raw → /wheel_distances (Python)
     └── rover_encoder/encoder_dashboard.py
-    └── fake_stm32.py                     Test aracı (gerçek STM32 olmadan)
+    └── fake_stm32.py                     ← Test aracı (gerçek STM32 olmadan)
 ```
 
 | Paket | Dil | Görev |
@@ -90,14 +90,23 @@ Her paket kendi launch dosyasıyla ayrı ayrı başlatılır.
 # Varsayılan: Tank Drive, sol eksen = axes[1], sağ eksen = axes[4]
 ros2 launch drive_teleop teleop.launch.py
 
-# Diferansiyel sürüş moduyla (sol eksen = linear, sağ eksen = angular)
-ros2 launch drive_teleop teleop.launch.py drive_mode:=2
+# Joystick cihazını açıkça belirt (aynı bilgisayarda arm joystick de varsa)
+ros2 launch drive_teleop teleop.launch.py joy_device:=/dev/input/js0
+
+# Diferansiyel sürüş moduyla
+ros2 launch drive_teleop teleop.launch.py joy_device:=/dev/input/js0 drive_mode:=2
 
 # Joystick eksen indekslerini özelleştirerek
-ros2 launch drive_teleop teleop.launch.py left_axis_index:=1 right_axis_index:=3
+ros2 launch drive_teleop teleop.launch.py joy_device:=/dev/input/js0 left_axis_index:=1 right_axis_index:=3
 ```
 
-### 2. STM32 Sürücüsü
+> `joy_device` parametresi aynı bilgisayarda arm joystick de takılıysa
+> **mutlaka açıkça belirtilmelidir.** Mobility joystick için `/mobility_joy`,
+> arm joystick için `/robotarm_joy` topic'i kullanılır — topic çakışması yaşanmaz,
+> ancak `joy_node`'un doğru fiziksel cihaza bağlandığından emin olmak için
+> `joy_device` her zaman yazılmalıdır.
+
+### 2. STM32 Sürücüsü (Jetson'da)
 
 ```bash
 # Varsayılan: /dev/ttyACM0, 115200 baud
@@ -180,6 +189,7 @@ Bu değerleri donanımına göre güncellemeyi unutma.
 
 | Parametre | Varsayılan | Açıklama |
 |---|---|---|
+| `joy_device` | *(boş)* | Joystick cihaz yolu (ör: `/dev/input/js0`) — aynı bilgisayarda iki joystick varsa **mutlaka yaz** |
 | `left_axis_index` | `1` | Sol tekerlek ekseni (axes[n]) |
 | `right_axis_index` | `4` | Sağ tekerlek ekseni — Tank Drive |
 | `drive_mode` | `1` | `1` = Tank Drive, `2` = Diferansiyel |
@@ -211,14 +221,13 @@ Sağ tekerleklere 500, sol tekerleklere 200 tik/mesaj gönderir — rover sola d
 **STM32 portu açılamıyor:**
 ```bash
 sudo chmod 666 /dev/ttyACM0
-# Port numarasını kontrol et:
 ls /dev/ttyACM*
 ```
 
 **Joystick bulunamıyor:**
 ```bash
 ls /dev/input/js*
-ros2 topic echo /joy
+ros2 topic echo /mobility_joy
 ```
 
 **Rover ters yönde gidiyor:**
@@ -230,8 +239,27 @@ ros2 topic echo /wheel_speeds
 ros2 topic echo /encoder_raw
 ```
 
+**Yanlış joystick'i alıyor (arm joystick de aynı bilgisayarda):**
+```bash
+ls /dev/input/js*
+ros2 launch drive_teleop teleop.launch.py joy_device:=/dev/input/js0
+```
+
+---
+
+**RTPS_TRANSPORT_SHM hataları:**
+
+```
+[RTPS_TRANSPORT_SHM Error] Failed init_port ...
+```
+
+Bu hatalar zararsızdır, node'lar çalışmaya devam eder. Görmek istemiyorsan:
+```bash
+sudo rm -rf /dev/shm/fastrtps_*
+```
+
 ---
 
 ## Bağlantılı Proje
 
-Robotik kol kontrolü → [`rover_arm`][(https://github.com/busragizemyilmaz/rover_arm)](https://github.com/busragizemyilmaz/robotic_arm)
+Robotik kol kontrolü → [`robotic_arm`](https://github.com/busragizemyilmaz/robotic_arm)
