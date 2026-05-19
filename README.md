@@ -87,7 +87,7 @@ Her paket kendi launch dosyasıyla ayrı ayrı başlatılır.
 ### 1. Joystick + Teleop
 
 ```bash
-# Varsayılan: Tank Drive, sol eksen = axes[1], sağ eksen = axes[4]
+# Varsayılan: Tank Drive, sol eksen = axes[1], sağ eksen = axes[4], R1 aktivasyon butonu = 5
 ros2 launch drive_teleop teleop.launch.py
 
 # Joystick cihazını açıkça belirt (aynı bilgisayarda arm joystick de varsa)
@@ -96,9 +96,13 @@ ros2 launch drive_teleop teleop.launch.py joy_device:=/dev/input/js0
 # Diferansiyel sürüş moduyla
 ros2 launch drive_teleop teleop.launch.py joy_device:=/dev/input/js0 drive_mode:=2
 
-# Joystick eksen indekslerini özelleştirerek
-ros2 launch drive_teleop teleop.launch.py joy_device:=/dev/input/js0 left_axis_index:=1 right_axis_index:=3
+# Joystick eksen ve buton indekslerini özelleştirerek
+ros2 launch drive_teleop teleop.launch.py joy_device:=/dev/input/js0 left_axis_index:=1 right_axis_index:=3 activation_button_index:=5
 ```
+
+> **Güvenlik:** Rover yalnızca **R1 butonuna (varsayılan: buton 5) basılı tutulduğu sürece** hareket eder.
+> Bırakıldığında hedef hız sıfırlanır, ivmeleme sınırlayıcı yumuşak bir şekilde durdurur.
+> Farklı bir joystick kullanıyorsan `activation_button_index` parametresini doğru butona ayarla.
 
 > `joy_device` parametresi aynı bilgisayarda arm joystick de takılıysa
 > **mutlaka açıkça belirtilmelidir.** Mobility joystick için `/mobility_joy`,
@@ -133,7 +137,7 @@ Terminal ekrana canlı olarak her tekerlerin ham tik ve gidilen mesafe bilgisini
 | `drive_mode` | Açıklama |
 |---|---|
 | `1` (Tank Drive) | Sol joystick ekseni sol tekerlekleri, sağ ekseni sağ tekerlekleri kontrol eder |
-| `2` (Diferansiyel) | Sol eksen = ileri/geri hız, sağ eksen = dönüş yönü |
+| `2` (Diferansiyel) | Sol eksen = ileri/geri hız, sağ eksen (`right_axis_index_diff`) = dönüş yönü |
 
 ### PWM / PID Geçişi
 
@@ -190,9 +194,11 @@ Bu değerleri donanımına göre güncellemeyi unutma.
 | Parametre | Varsayılan | Açıklama |
 |---|---|---|
 | `joy_device` | *(boş)* | Joystick cihaz yolu (ör: `/dev/input/js0`) — aynı bilgisayarda iki joystick varsa **mutlaka yaz** |
-| `left_axis_index` | `1` | Sol tekerlek ekseni (axes[n]) |
+| `left_axis_index` | `1` | Sol tekerlek ekseni / linear eksen (Tank & Diff) |
 | `right_axis_index` | `4` | Sağ tekerlek ekseni — Tank Drive |
+| `right_axis_index_diff` | `3` | Angular (dönüş) ekseni — yalnızca Diferansiyel Drive modunda kullanılır |
 | `drive_mode` | `1` | `1` = Tank Drive, `2` = Diferansiyel |
+| `activation_button_index` | `5` | Dead-man butonu — PS4/PS5 = 5 (R1), Xbox = 5 (RB). Farklı joystick için değiştir. |
 
 ### `drive_hardware` — `hardware.launch.py`
 
@@ -228,6 +234,17 @@ ls /dev/ttyACM*
 ```bash
 ls /dev/input/js*
 ros2 topic echo /mobility_joy
+```
+
+**R1'e basıyorum ama rover hareket etmiyor:**
+
+`activation_button_index` yanlış olabilir. Joystick buton haritanı kontrol et:
+```bash
+ros2 topic echo /mobility_joy
+```
+`buttons` dizisinde R1'e bastığında hangi index `1` oluyor? Ardından:
+```bash
+ros2 launch drive_teleop teleop.launch.py activation_button_index:=<doğru_index>
 ```
 
 **Rover ters yönde gidiyor:**

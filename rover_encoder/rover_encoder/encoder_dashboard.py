@@ -85,14 +85,14 @@ class EncoderDashboard(Node):
         sys.stdout.write("\033c") 
         output = (
             f"=================================================\n"
-            f"          ROVER ODOMETRI DASHBOARD (CANLI)       \n"
+            f"         ROVER ODOMETRY DASHBOARD (LIVE)         \n"
             f"=================================================\n"
-            f" Tekerlek        | Ham Tik (STM32) | Gidilen Mesafe\n"
-            f"-----------------|-----------------|---------------\n"
-            f" Sag On   (1)    | {raw[0]:<15} | {dist[0]:.4f} m\n"
-            f" Sag Arka (2)    | {raw[1]:<15} | {dist[1]:.4f} m\n"
-            f" Sol On   (3)    | {raw[2]:<15} | {dist[2]:.4f} m\n"
-            f" Sol Arka (4)    | {raw[3]:<15} | {dist[3]:.4f} m\n"
+            f" Wheel           | Raw Ticks (STM32) | Distance      \n"
+            f"-----------------|-------------------|---------------\n"
+            f" Front Right (1) | {raw[0]:<17} | {dist[0]:.4f} m\n"
+            f" Rear Right  (2) | {raw[1]:<17} | {dist[1]:.4f} m\n"
+            f" Front Left  (3) | {raw[2]:<17} | {dist[2]:.4f} m\n"
+            f" Rear Left   (4) | {raw[3]:<17} | {dist[3]:.4f} m\n"
             f"=================================================\n"
         )
         sys.stdout.write(output)

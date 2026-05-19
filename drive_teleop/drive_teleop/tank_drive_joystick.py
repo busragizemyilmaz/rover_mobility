@@ -22,6 +22,7 @@ class TankDriveJoystick(Node):
         self.declare_parameter("right_axis_index", 4)
         self.declare_parameter("right_axis_index_diff", 3)
         self.declare_parameter("mode_button_index", 0)    # PID/PWM Mode Button (X button (Xbox=2, PS4=0))
+        self.declare_parameter("activation_button_index", 5) # R1 Button for Activation (Dead Man's Switch)
         self.declare_parameter("drive_mode", 1)           # 1: Tank Drive, 2: Differential Drive
 
         # Get Parameters
@@ -33,6 +34,7 @@ class TankDriveJoystick(Node):
         self.right_axis_index = self.get_parameter("right_axis_index").value
         self.right_axis_index_diff = self.get_parameter("right_axis_index_diff").value
         self.mode_button_index = self.get_parameter("mode_button_index").value
+        self.activation_button_index = self.get_parameter("activation_button_index").value
         self.drive_mode = self.get_parameter("drive_mode").value
 
         self.control_period = 1.0 / self.control_rate
@@ -48,6 +50,7 @@ class TankDriveJoystick(Node):
 
         self.control_mode = 0  # 0: PWM, 1: PID
         self.last_button_state = 0
+        self.activation_pressed = False
 
         self.last_joy_time = self.get_clock().now()
         self.timeout_active = False
@@ -72,6 +75,7 @@ class TankDriveJoystick(Node):
 
         drive_mode_name = "Tank Drive (1)" if self.drive_mode == 1 else "Differential Drive (2)"
         self.get_logger().info(f"Tank Drive Joystick Node Started. Mode: PWM (0) | Drive Mode: {drive_mode_name}")
+        self.get_logger().info("SAFETY ACTIVE: Hold down the R1 button to drive!")
 
     # --------------------------------------------------
     # Utility Functions
@@ -115,6 +119,14 @@ class TankDriveJoystick(Node):
             self.get_logger().info("Joystick connection restored.")
             self.timeout_active = False
 
+        # --- Button inputs (Activation & Mode) ---
+        try:
+            self.activation_pressed = bool(msg.buttons[self.activation_button_index])
+            current_mode_button = msg.buttons[self.mode_button_index]
+        except IndexError:
+            self.get_logger().error("Button index out of range! Check joystick configuration.")
+            return
+
         # --- Axis inputs ---
         try:
             left_input = msg.axes[self.left_axis_index]
@@ -124,30 +136,30 @@ class TankDriveJoystick(Node):
             self.get_logger().error("Joystick axis index out of range!")
             return
 
-        if self.drive_mode == 1:
-            # --- Tank Drive: her eksen bir tekerleği kontrol eder ---
-            self.target_left_speed = self.apply_deadzone(left_input)
-            self.target_right_speed = self.apply_deadzone(right_input)
+        # --- SADECE R1'E BASILIYSA HAREKET ET ---
+        if self.activation_pressed:
+            if self.drive_mode == 1:
+                # --- Tank Drive: her eksen bir tekerleği kontrol eder ---
+                self.target_left_speed = self.apply_deadzone(left_input)
+                self.target_right_speed = self.apply_deadzone(right_input)
 
+            else:
+                # --- Differential Drive: sol eksen=linear, sağ eksen=angular ---
+                linear = self.apply_deadzone(left_input)
+                angular = self.apply_deadzone(right_input_diff)
+                
+                left = linear + angular
+                right = linear - angular
+
+                # Clamp to [-1, 1]
+                self.target_left_speed = max(min(left, 1.0), -1.0)
+                self.target_right_speed = max(min(right, 1.0), -1.0)
         else:
-            # --- Differential Drive: sol eksen=linear, sağ eksen=angular ---
-            linear = self.apply_deadzone(left_input)
-            angular = self.apply_deadzone(right_input_diff)
-            
-            left = linear + angular
-            right = linear - angular
-
-            # Clamp to [-1, 1]
-            self.target_left_speed = max(min(left, 1.0), -1.0)
-            self.target_right_speed = max(min(right, 1.0), -1.0)
+            # R1 BIRAKILDIĞINDA ANINDA HEDEFLERİ SIFIRLA
+            self.target_left_speed = 0.0
+            self.target_right_speed = 0.0
 
         # --- Mode toggle button (rising edge only) ---
-        try:
-            current_mode_button = msg.buttons[self.mode_button_index]
-        except IndexError:
-            self.get_logger().error("Mode button index out of range!")
-            return
-
         if current_mode_button == 1 and self.last_button_state == 0:
             # Rising edge detected → toggle mode
             self.control_mode = 1 if self.control_mode == 0 else 0
@@ -164,7 +176,7 @@ class TankDriveJoystick(Node):
         current_time = self.get_clock().now()
         time_since_joy = (current_time - self.last_joy_time).nanoseconds / 1e9
 
-        # Safety timeout
+        # Safety timeout (Bağlantı koparsa da durdurur)
         if time_since_joy > self.timeout_sec:
             if not self.timeout_active:
                 self.get_logger().warn("Joystick timeout. Stopping rover.")
@@ -173,7 +185,7 @@ class TankDriveJoystick(Node):
             self.target_left_speed = 0.0
             self.target_right_speed = 0.0
 
-        # Apply acceleration limiting
+        # Apply acceleration limiting (R1 bırakıldığında hemen durmak yerine ivmeli duruş sağlar)
         self.current_left_speed = self.limit_acceleration(
             self.target_left_speed,
             self.current_left_speed,

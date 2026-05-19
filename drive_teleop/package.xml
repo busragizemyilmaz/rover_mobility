@@ -10,9 +10,6 @@
   <maintainer email="your_email@example.com">Your Name</maintainer>
   <license>MIT</license>
 
-  <!-- Build Tool -->
-  <buildtool_depend>ament_python</buildtool_depend>
-
   <!-- Runtime Dependencies -->
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
